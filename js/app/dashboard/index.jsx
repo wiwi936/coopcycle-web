@@ -39,6 +39,79 @@ function isPlanned(delivery) {
   return !!item
 }
 
+map.on('mouseup', () => {
+  // console.log('map mouseup')
+
+  draggedMarker = null
+  if (markersPolyline) {
+    map.removeLayer(markersPolyline)
+    markersPolyline = null
+  }
+
+  map.dragging.enable()
+})
+
+map.on('mousemove', (e) => {
+
+  if (draggedMarker && markersPolyline) {
+    markersPolyline.setLatLngs([
+      draggedMarker.getLatLng(),
+      e.latlng
+    ])
+  }
+  // console.log(e)
+
+});
+
+let draggedMarker;
+let markersPolyline;
+
+window.AppData.Dashboard.deliveries.forEach(delivery => {
+  const originAddress = MapHelper.createMarker([
+    delivery.originAddress.geo.latitude,
+    delivery.originAddress.geo.longitude
+  ], 'arrow-up', 'marker', '#337ab7')
+
+  const deliveryAddress = MapHelper.createMarker([
+    delivery.deliveryAddress.geo.latitude,
+    delivery.deliveryAddress.geo.longitude
+  ], 'arrow-down', 'marker', '#27AE60')
+
+  originAddress.on('mousedown', (e) => {
+    // console.log('mousedown')
+
+    map.dragging.disable()
+
+    draggedMarker = originAddress
+    draggedMarker.dragging.disable()
+
+    console.log(originAddress.getLatLng())
+
+    var latlngs = [
+      draggedMarker.getLatLng(),
+      e.latlng
+    ];
+    markersPolyline = L.polyline(latlngs, {color: 'red'}).addTo(map)
+  })
+
+  originAddress.on('mouseup', () => {
+    console.log('mouseup')
+
+    draggedMarker = null
+    map.removeLayer(markersPolyline)
+    markersPolyline = null
+
+    map.dragging.enable()
+  })
+
+  // const layers = this.layers.get(username)
+  // layers.markers.addLayer(marker)
+
+  // return marker
+  originAddress.addTo(map)
+  deliveryAddress.addTo(map)
+})
+
 let elementRef
 let waitingComponent
 let waitingList
