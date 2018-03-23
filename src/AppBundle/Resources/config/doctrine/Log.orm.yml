@@ -1,0 +1,24 @@
+AppBundle\Entity\Log:
+    type: entity
+    table: log
+    id:
+        id:
+            type: integer
+            id: true
+            generator:
+                strategy: IDENTITY
+    fields:
+        eventName:
+            type: string
+            length: 255
+            column: event_name
+        message:
+            type: text
+        parameters:
+            type: json_array
+        createdAt:
+            type: datetime
+            column: created_at
+            gedmo:
+                timestampable:
+                    on: create
