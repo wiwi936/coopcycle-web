@@ -16,6 +16,7 @@ use AppBundle\Form\RestaurantAdminType;
 use AppBundle\Entity\ApiUser;
 use AppBundle\Entity\Delivery;
 use AppBundle\Entity\Delivery\PricingRuleSet;
+use AppBundle\Entity\Log;
 use AppBundle\Entity\Menu;
 use AppBundle\Entity\Restaurant;
 use AppBundle\Entity\Store;
@@ -900,6 +901,21 @@ class AdminController extends Controller
         return [
             'pricing_rule_set' => $pricingRuleSet,
             'embed_settings_form' => $embedSettingsForm->createView(),
+        ];
+    }
+
+    /**
+     * @Route("/admin/logs", name="admin_logs")
+     * @Template()
+     */
+    public function logsAction(Request $request)
+    {
+        $logs = $this->getDoctrine()
+            ->getRepository(Log::class)
+            ->findBy([], ['createdAt' => 'DESC']);
+
+        return [
+            'logs' => $logs,
         ];
     }
 }

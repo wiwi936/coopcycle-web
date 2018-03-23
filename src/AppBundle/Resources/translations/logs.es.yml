@@ -1,0 +1,4 @@
+task.create: |
+  <strong>%user%</strong> a créé la tâche #%task%
+task.assign: |
+  <strong>%user%</strong> a assigné la tâche #%task% à <strong>%task_user%</strong>

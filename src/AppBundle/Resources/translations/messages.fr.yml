@@ -107,6 +107,8 @@ adminDashboard.zones.delete: Supprimer
 adminDashboard.zones.uploadGeoJSON: Uploadez un fichier GeoJSON
 adminDashboard.zones.send: Envoyer
 
+adminDashboard.logs.title: Historique
+
 
 delivery.status.WAITING: En attente
 delivery.status.DISPATCHED: Assignée
@@ -425,4 +427,3 @@ embed.delivery.confirm_message: |
   Nous avons bien enregistré votre demande. Votre course est en attente de validation.
   <br>
   Nous allons vous envoyer un email d'ici quelques minutes. Vous recevrez un second mail dès que la course est confirmée.
-

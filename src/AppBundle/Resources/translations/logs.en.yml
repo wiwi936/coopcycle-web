@@ -1,0 +1,4 @@
+task.create: |
+  <strong>%user%</strong> created task #%task%
+task.assign: |
+  <strong>%user%</strong> assigned task #%task% to <strong>%task_user%</strong>

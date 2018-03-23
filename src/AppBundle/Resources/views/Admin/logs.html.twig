@@ -1,0 +1,20 @@
+{% extends "AppBundle::admin.html.twig" %}
+
+{% block breadcrumb %}
+<li>{% trans %}adminDashboard.logs.title{% endtrans %}</li>
+{% endblock %}
+
+{% block content %}
+
+<table class="table">
+{% for log in logs %}
+  <tr>
+    <td>{{ log.message|trans(log.parameters, 'logs')|raw }}</td>
+    <td class="text-right">{{ log.createdAt|localizeddate('medium', 'short') }}</td>
+  </tr>
+{% endfor %}
+</table>
+{% endblock %}
+
+{% block scripts %}
+{% endblock %}

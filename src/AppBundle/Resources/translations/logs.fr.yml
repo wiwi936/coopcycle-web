@@ -1,0 +1,8 @@
+task.create: |
+  <strong>%user%</strong> a créé la tâche #%task%
+task.assign: |
+  <strong>%user%</strong> a assigné la tâche #%task% à <strong>%task_user%</strong>
+task.done: |
+  <strong>%user%</strong> a terminé la tâche #%task%
+task.failed: |
+  <strong>%user%</strong> a signalé un problème sur la tâche #%task%
