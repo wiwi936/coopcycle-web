@@ -43,13 +43,20 @@ class Pay extends Base
             throw new BadRequestHttpException('Stripe token is missing');
         }
 
-        $stripePayment = $order->getLastPayment(PaymentInterface::STATE_CART);
+        $stripePayment = $order->getLastPayment(PaymentInterface::STATE_NEW);
+
+        if (null === $stripePayment) {
+            throw new BadRequestHttpException('No payment found');
+        }
+
         $stripePayment->setStripeToken($data['stripeToken']);
 
-        $stateMachine = $this->stateMachineFactory->get($stripePayment, PaymentTransitions::GRAPH);
-        $stateMachine->apply(PaymentTransitions::TRANSITION_CREATE);
+        $this->paymentManager->authorize($stripePayment);
 
-        $this->doctrine->getManagerForClass(StripePayment::class)->flush();
+        // $stateMachine = $this->stateMachineFactory->get($stripePayment, PaymentTransitions::GRAPH);
+        // $stateMachine->apply(PaymentTransitions::TRANSITION_CREATE);
+
+        // $this->doctrine->getManagerForClass(StripePayment::class)->flush();
 
         if (PaymentInterface::STATE_FAILED === $stripePayment->getState()) {
             throw new BadRequestHttpException($stripePayment->getLastError());

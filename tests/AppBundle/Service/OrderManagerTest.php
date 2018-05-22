@@ -2,254 +2,108 @@
 
 namespace Tests\AppBundle\Service;
 
+use AppBundle\Entity\Address;
+use AppBundle\Entity\Base\GeoCoordinates;
 use AppBundle\Entity\Delivery;
 use AppBundle\Entity\Restaurant;
-use AppBundle\Entity\StripeAccount;
 use AppBundle\Entity\StripePayment;
-use AppBundle\Entity\StripeTransfer;
+use AppBundle\Entity\Sylius\Order;
+use AppBundle\Event;
 use AppBundle\Service\OrderManager;
 use AppBundle\Service\RoutingInterface;
-use AppBundle\Service\SettingsManager;
 use AppBundle\Sylius\Order\OrderInterface;
-use AppBundle\Sylius\StripeTransfer\StripeTransferTransitions;
-use Doctrine\Common\Persistence\ManagerRegistry;
-use PHPUnit\Framework\TestCase;
 use Prophecy\Argument;
-use SM\Factory\FactoryInterface as StateMachineFactoryInterface;
 use SM\StateMachine\StateMachineInterface;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Sylius\Component\Payment\Model\PaymentInterface;
-use Sylius\Component\Payment\PaymentTransitions;
 use Symfony\Component\EventDispatcher\EventDispatcherInterface;
-use Tests\AppBundle\StripeTrait;
 
-class OrderManagerTest extends TestCase
+class OrderManagerTest extends KernelTestCase
 {
-    use StripeTrait {
-        setUp as setUpStripe;
-    }
-
     private $orderManager;
 
     public function setUp()
     {
-        $this->setUpStripe();
+        parent::setUp();
 
-        $this->doctrine = $this->prophesize(ManagerRegistry::class);
+        self::bootKernel();
+
+        $this->stateMachineFactory = static::$kernel->getContainer()->get('sm.factory');
+
         $this->routing = $this->prophesize(RoutingInterface::class);
-        $this->stateMachineFactory = $this->prophesize(StateMachineFactoryInterface::class);
-        $this->settingsManager = $this->prophesize(SettingsManager::class);
         $this->eventDispatcher = $this->prophesize(EventDispatcherInterface::class);
 
-        $this->settingsManager
-            ->get('stripe_secret_key')
-            ->willReturn(self::$stripeApiKey);
-
         $this->orderManager = new OrderManager(
-            $this->doctrine->reveal(),
             $this->routing->reveal(),
-            $this->stateMachineFactory->reveal(),
-            $this->settingsManager->reveal(),
+            $this->stateMachineFactory,
             $this->eventDispatcher->reveal()
         );
     }
 
-    public function testAuthorizePaymentDoesNothing()
-    {
-        $stripePayment = new StripePayment();
-
-        $order = $this->prophesize(OrderInterface::class);
-        $order
-            ->getLastPayment(PaymentInterface::STATE_NEW)
-            ->willReturn($stripePayment);
-
-        $this->stateMachineFactory
-            ->get($stripePayment, PaymentTransitions::GRAPH)
-            ->shouldNotBeCalled();
-
-        $this->orderManager->authorizePayment($order->reveal());
-
-        $this->assertEquals(PaymentInterface::STATE_CART, $stripePayment->getState());
-    }
-
-    public function testAuthorizePaymentCreateCharge()
-    {
-        $stripePayment = new StripePayment();
-        $stripePayment->setState(PaymentInterface::STATE_NEW);
-        $stripePayment->setStripeToken('tok_123456');
-        $stripePayment->setCurrencyCode('EUR');
-
-        $stateMachine = $this->prophesize(StateMachineInterface::class);
-
-        $stateMachine
-            ->apply('authorize')
-            ->shouldBeCalled();
-
-        $order = $this->prophesize(OrderInterface::class);
-        $order
-            ->getLastPayment(PaymentInterface::STATE_NEW)
-            ->willReturn($stripePayment);
-        $order
-            ->getTotal()
-            ->willReturn(900);
-        $order
-            ->getNumber()
-            ->willReturn('000001');
-
-        $this->stateMachineFactory
-            ->get($stripePayment, PaymentTransitions::GRAPH)
-            ->willReturn($stateMachine->reveal());
-
-        $this->shouldSendStripeRequest('POST', '/v1/charges', [
-            'amount' => 900,
-            'currency' => 'eur',
-            'source' => 'tok_123456',
-            'description' => 'Order 000001',
-            'capture' => 'false',
-        ]);
-
-        $this->orderManager->authorizePayment($order->reveal());
-
-        $this->assertNotNull($stripePayment->getCharge());
-    }
-
-    public function testCapturePaymentCapturesCharge()
-    {
-        $stripePayment = new StripePayment();
-        $stripePayment->setState(PaymentInterface::STATE_AUTHORIZED);
-        $stripePayment->setStripeToken('tok_123456');
-        $stripePayment->setCurrencyCode('EUR');
-        $stripePayment->setCharge('ch_123456');
-
-        $stateMachine = $this->prophesize(StateMachineInterface::class);
-
-        $stateMachine
-            ->apply(PaymentTransitions::TRANSITION_COMPLETE)
-            ->shouldBeCalled();
-
-        $order = $this->prophesize(OrderInterface::class);
-        $order
-            ->getLastPayment(PaymentInterface::STATE_AUTHORIZED)
-            ->willReturn($stripePayment);
-
-        $this->stateMachineFactory
-            ->get($stripePayment, PaymentTransitions::GRAPH)
-            ->willReturn($stateMachine->reveal());
-
-        $this->shouldSendStripeRequest('GET', '/v1/charges/ch_123456');
-        $this->shouldSendStripeRequest('POST', '/v1/charges/ch_123456/capture');
-
-        $this->orderManager->capturePayment($order->reveal());
-    }
-
-    public function testCreateDeliveryDoesNothing()
+    public function testCreateDoesNothing()
     {
         $delivery = new Delivery();
 
-        $order = $this->prophesize(OrderInterface::class);
-        $order
-            ->getDelivery()
-            ->willReturn($delivery);
+        $order = new Order();
+        $order->setDelivery($delivery);
 
-        $order
-            ->setDelivery($delivery)
-            ->shouldNotBeCalled();
+        $this->orderManager->create($order);
 
-        $this->orderManager->createDelivery($order->reveal());
+        $this->assertSame($delivery, $order->getDelivery());
     }
 
-    public function testCreateTransferWithNoRestaurant()
+    public function testCreateCascadesTransition()
     {
-        $stripePayment = $this->prophesize(StripePayment::class);
-        $order = $this->prophesize(OrderInterface::class);
+        $stripePayment = new StripePayment();
+        $stripePayment->setState(PaymentInterface::STATE_CART);
 
-        $order
-            ->getRestaurant()
-            ->willReturn(null);
+        $order = new Order();
+        $order->setState(OrderInterface::STATE_CART);
+        $order->addPayment($stripePayment);
 
-        $stripePayment
-            ->getOrder()
-            ->willReturn($order->reveal());
-
-        $this->shouldNotSendStripeRequest();
-
-        $this->orderManager->createTransfer($stripePayment->reveal());
-    }
-
-    public function testCreateTransferWithNoStripeAccount()
-    {
-        $stripePayment = $this->prophesize(StripePayment::class);
-        $order = $this->prophesize(OrderInterface::class);
-        $restaurant = $this->prophesize(Restaurant::class);
-
-        $restaurant
-            ->getStripeAccount()
-            ->willReturn(null);
-
-        $order
-            ->getRestaurant()
-            ->willReturn($restaurant->reveal());
-
-        $stripePayment
-            ->getOrder()
-            ->willReturn($order->reveal());
-
-        $this->shouldNotSendStripeRequest();
-
-        $this->orderManager->createTransfer($stripePayment->reveal());
-    }
-
-    public function testCreateTransfer()
-    {
-        $stripePayment = $this->prophesize(StripePayment::class);
-        $stripeAccount = $this->prophesize(StripeAccount::class);
-        $order = $this->prophesize(OrderInterface::class);
-        $restaurant = $this->prophesize(Restaurant::class);
-
-        $stripeAccount
-            ->getStripeUserId()
-            ->willReturn('acct_123');
-
-        $restaurant
-            ->getStripeAccount()
-            ->willReturn($stripeAccount->reveal());
-
-        $order
-            ->getRestaurant()
-            ->willReturn($restaurant->reveal());
-        $order
-            ->getTotal()
-            ->willReturn(10000);
-        $order
-            ->getFeeTotal()
-            ->willReturn(500);
-
-        $stripePayment
-            ->getOrder()
-            ->willReturn($order->reveal());
-        $stripePayment
-            ->getCurrencyCode()
-            ->willReturn('EUR');
-        $stripePayment
-            ->getCharge()
-            ->willReturn('ch_123456');
-
-        $stateMachine = $this->prophesize(StateMachineInterface::class);
-
-        $stateMachine
-            ->apply(StripeTransferTransitions::TRANSITION_COMPLETE)
+        $this->eventDispatcher
+            ->dispatch(Event\OrderCreateEvent::NAME, Argument::type(Event\OrderCreateEvent::class))
             ->shouldBeCalled();
 
-        $this->stateMachineFactory
-            ->get(Argument::type(StripeTransfer::class), StripeTransferTransitions::GRAPH)
-            ->willReturn($stateMachine->reveal());
+        $this->orderManager->create($order);
 
-        $this->shouldSendStripeRequest('POST', '/v1/transfers', [
-            'amount' => 9500,
-            'currency' => 'eur',
-            'destination' => 'acct_123',
-            'source_transaction' => 'ch_123456',
-        ]);
+        $this->assertEquals(OrderInterface::STATE_NEW, $order->getState());
+        $this->assertEquals(PaymentInterface::STATE_NEW, $stripePayment->getState());
+    }
 
-        $this->orderManager->createTransfer($stripePayment->reveal());
+    public function testAcceptCreatesDelivery()
+    {
+        $pickupAddress = new Address();
+        $pickupAddress->setGeo(new GeoCoordinates());
+
+        $dropoffAddress = new Address();
+        $dropoffAddress->setGeo(new GeoCoordinates());
+
+        $restaurant = new Restaurant();
+        $restaurant->setAddress($pickupAddress);
+
+        $order = new Order();
+        $order->setState(OrderInterface::STATE_NEW);
+        $order->setRestaurant($restaurant);
+        $order->setShippingAddress($dropoffAddress);
+        $order->setShippedAt(new \DateTime('+1 hour'));
+
+        $this->routing
+            ->getDuration(
+                Argument::type(GeoCoordinates::class),
+                Argument::type(GeoCoordinates::class)
+            )
+            ->willReturn(600);
+
+        $this->eventDispatcher
+            ->dispatch(Event\OrderAcceptEvent::NAME, Argument::type(Event\OrderAcceptEvent::class))
+            ->shouldBeCalled();
+
+        $this->assertNull($order->getDelivery());
+
+        $this->orderManager->accept($order);
+
+        $this->assertEquals(OrderInterface::STATE_ACCEPTED, $order->getState());
+        $this->assertNotNull($order->getDelivery());
     }
 }

@@ -8,7 +8,7 @@ use AppBundle\Form\StripePaymentType;
 use Symfony\Bundle\FrameworkBundle\Controller\Controller;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Route;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Template;
-use Stripe;
+use Sylius\Component\Payment\Model\PaymentInterface;
 use Sylius\Component\Payment\PaymentTransitions;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,10 +25,8 @@ class PublicController extends Controller
      */
     public function orderAction($number, Request $request)
     {
-        $settingsManager = $this->get('coopcycle.settings_manager');
         $stateMachineFactory = $this->get('sm.factory');
-
-        Stripe\Stripe::setApiKey($settingsManager->get('stripe_secret_key'));
+        $paymentManager = $this->get('coopcycle.payment_manager');
 
         $order = $this->get('sylius.repository.order')->findOneBy([
             'number' => $number
@@ -52,33 +50,25 @@ class PublicController extends Controller
 
             $form->handleRequest($request);
 
-            // TODO : handle this with orderManager
             if ($form->isSubmitted() && $form->isValid()) {
 
                 try {
 
-                    $stripeToken = $form->get('stripeToken')->getData();
-
-                    $charge = Stripe\Charge::create([
-                      'amount' => $stripePayment->getAmount(),
-                      'currency' => strtolower($stripePayment->getCurrencyCode()),
-                      'description' => sprintf('Order %s', $order->getNumber()),
-                      'metadata' => [
-                        'order_id' => $order->getId()
-                      ],
-                      'source' => $stripeToken,
-                    ]);
-
-                    $stripePayment->setCharge($charge->id);
-                    $stateMachine->apply(PaymentTransitions::TRANSITION_COMPLETE);
+                    $stripePayment->setStripeToken($form->get('stripeToken')->getData());
+                    $paymentManager->charge($stripePayment);
 
                 } catch (\Exception $e) {
 
-                    $stripePayment->setLastError($e->getMessage());
-                    $stateMachine->apply(PaymentTransitions::TRANSITION_FAIL);
-
                 } finally {
-                    $this->getDoctrine()->getManagerForClass(StripePayment::class)->flush();
+                    $this->get('sylius.manager.order')->flush();
+                }
+
+                // TODO Manage failed payment
+
+                if (PaymentInterface::STATE_FAILED === $stripePayment->getState()) {
+                    return array_merge($parameters, [
+                        'error' => $stripePayment->getLastError()
+                    ]);
                 }
 
                 return $this->redirectToRoute('public_order', ['number' => $number]);

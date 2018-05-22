@@ -11,7 +11,7 @@ use AppBundle\Form\StripePaymentType;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Route;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Template;
 use Sylius\Component\Payment\Model\PaymentInterface;
-use Sylius\Component\Payment\PaymentTransitions;
+// use Sylius\Component\Payment\PaymentTransitions;
 use Symfony\Bundle\FrameworkBundle\Controller\Controller;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -66,12 +66,9 @@ class OrderController extends Controller
     public function paymentAction(Request $request)
     {
         $order = $this->get('sylius.context.cart')->getCart();
+
         $orderManager = $this->get('coopcycle.order_manager');
-
-        $stripePayment = $order->getLastPayment(PaymentInterface::STATE_CART);
-
-        $stateMachineFactory = $this->get('sm.factory');
-        $stateMachine = $stateMachineFactory->get($stripePayment, PaymentTransitions::GRAPH);
+        $paymentManager = $this->get('coopcycle.payment_manager');
 
         $form = $this->createForm(StripePaymentType::class);
 
@@ -85,22 +82,30 @@ class OrderController extends Controller
         $form->handleRequest($request);
         if ($form->isSubmitted() && $form->isValid()) {
 
-            $stripePayment->setStripeToken($form->get('stripeToken')->getData());
+            try {
 
-            $stateMachine->apply(PaymentTransitions::TRANSITION_CREATE);
+                // Apply create transition on order
+                // After that, the order shouldn't be modified anymore
+                $orderManager->create($order);
 
-            $this->get('sylius.manager.order')->flush();
+                $stripePayment = $order->getLastPayment(PaymentInterface::STATE_NEW);
+                $stripePayment->setStripeToken($form->get('stripeToken')->getData());
+
+                $paymentManager->authorize($stripePayment);
+
+            } catch (\Exception $e) {
+
+            } finally {
+                $this->get('sylius.manager.order')->flush();
+            }
+
+            // TODO Manage failed payment
 
             if (PaymentInterface::STATE_FAILED === $stripePayment->getState()) {
                 return array_merge($parameters, [
                     'error' => $stripePayment->getLastError()
                 ]);
             }
-
-            // Create order, to generate a number
-            $orderManager->create($order);
-
-            $this->get('sylius.manager.order')->flush();
 
             $sessionKeyName = $this->getParameter('sylius_cart_restaurant_session_key_name');
             $request->getSession()->remove($sessionKeyName);

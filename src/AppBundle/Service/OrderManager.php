@@ -3,8 +3,6 @@
 namespace AppBundle\Service;
 
 use AppBundle\Entity\Delivery;
-use AppBundle\Entity\StripePayment;
-use AppBundle\Entity\StripeTransfer;
 use AppBundle\Entity\Task;
 use AppBundle\Event\OrderCancelEvent;
 use AppBundle\Event\OrderCreateEvent;
@@ -14,10 +12,7 @@ use AppBundle\Event\OrderReadyEvent;
 use AppBundle\Event\OrderRefuseEvent;
 use AppBundle\Event\PaymentAuthorizeEvent;
 use AppBundle\Sylius\Order\OrderTransitions;
-use AppBundle\Sylius\StripeTransfer\StripeTransferTransitions;
-use Doctrine\Common\Persistence\ManagerRegistry;
 use SM\Factory\FactoryInterface as StateMachineFactoryInterface;
-use Stripe;
 use Sylius\Component\Order\Model\OrderInterface;
 use Sylius\Component\Payment\Model\PaymentInterface;
 use Sylius\Component\Payment\PaymentTransitions;
@@ -25,23 +20,17 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 class OrderManager
 {
-    private $doctrine;
     private $routing;
     private $stateMachineFactory;
-    private $settingsManager;
     private $eventDispatcher;
 
     public function __construct(
-        ManagerRegistry $doctrine,
         RoutingInterface $routing,
         StateMachineFactoryInterface $stateMachineFactory,
-        SettingsManager $settingsManager,
         EventDispatcherInterface $eventDispatcher)
     {
-        $this->doctrine = $doctrine;
         $this->routing = $routing;
         $this->stateMachineFactory = $stateMachineFactory;
-        $this->settingsManager = $settingsManager;
         $this->eventDispatcher = $eventDispatcher;
     }
 
@@ -49,39 +38,61 @@ class OrderManager
     {
         $stateMachine = $this->stateMachineFactory->get($order, OrderTransitions::GRAPH);
         $stateMachine->apply(OrderTransitions::TRANSITION_CREATE);
+
+        // Cascade create transition
+        foreach ($order->getPayments() as $payment) {
+            // Use $soft = true, do nothing if transition can't be applied
+            $this->stateMachineFactory
+                ->get($payment, PaymentTransitions::GRAPH)
+                ->apply(PaymentTransitions::TRANSITION_CREATE, $soft = true);
+        }
+
+        $this->dispatchEvent($order, OrderCreateEvent::NAME);
     }
 
     public function accept(OrderInterface $order)
     {
         $stateMachine = $this->stateMachineFactory->get($order, OrderTransitions::GRAPH);
         $stateMachine->apply(OrderTransitions::TRANSITION_ACCEPT);
+
+        $this->createDelivery($order);
+
+        $this->dispatchEvent($order, OrderAcceptEvent::NAME);
     }
 
     public function refuse(OrderInterface $order)
     {
         $stateMachine = $this->stateMachineFactory->get($order, OrderTransitions::GRAPH);
         $stateMachine->apply(OrderTransitions::TRANSITION_REFUSE);
+
+        $this->dispatchEvent($order, OrderRefuseEvent::NAME);
     }
 
     public function ready(OrderInterface $order)
     {
         $stateMachine = $this->stateMachineFactory->get($order, OrderTransitions::GRAPH);
         $stateMachine->apply(OrderTransitions::TRANSITION_READY);
+
+        $this->dispatchEvent($order, OrderReadyEvent::NAME);
     }
 
     public function fulfill(OrderInterface $order)
     {
         $stateMachine = $this->stateMachineFactory->get($order, OrderTransitions::GRAPH);
         $stateMachine->apply(OrderTransitions::TRANSITION_FULFILL);
+
+        $this->dispatchEvent($order, OrderFullfillEvent::NAME);
     }
 
     public function cancel(OrderInterface $order)
     {
         $stateMachine = $this->stateMachineFactory->get($order, OrderTransitions::GRAPH);
         $stateMachine->apply(OrderTransitions::TRANSITION_CANCEL);
+
+        $this->dispatchEvent($order, OrderCancelEvent::NAME);
     }
 
-    public function createDelivery(OrderInterface $order)
+    private function createDelivery(OrderInterface $order)
     {
         if (null !== $order->getDelivery()) {
             return;
@@ -115,145 +126,9 @@ class OrderManager
         $delivery->addTask($dropoff);
 
         $order->setDelivery($delivery);
-
-        $this->doctrine->getManagerForClass(Delivery::class)->persist($delivery);
-        $this->doctrine->getManagerForClass(Delivery::class)->flush();
     }
 
-    public function authorizePayment(OrderInterface $order)
-    {
-        $stripePayment = $order->getLastPayment(PaymentInterface::STATE_NEW);
-        $stripeToken = $stripePayment->getStripeToken();
-
-
-        if (null === $stripeToken) {
-            return;
-        }
-
-        Stripe\Stripe::setApiKey($this->settingsManager->get('stripe_secret_key'));
-        $stateMachine = $this->stateMachineFactory->get($stripePayment, PaymentTransitions::GRAPH);
-
-        try {
-
-            $charge = Stripe\Charge::create(array(
-                'amount' => $order->getTotal(),
-                'currency' => strtolower($stripePayment->getCurrencyCode()),
-                'source' => $stripeToken,
-                'description' => sprintf('Order %s', $order->getNumber()),
-                // To authorize a payment without capturing it,
-                // make a charge request that also includes the capture parameter with a value of false.
-                // This instructs Stripe to only authorize the amount on the customer’s card.
-                'capture' => false,
-            ));
-
-            $stripePayment->setCharge($charge->id);
-
-            $stateMachine->apply('authorize');
-
-        } catch (\Exception $e) {
-            $stripePayment->setLastError($e->getMessage());
-            $stateMachine->apply(PaymentTransitions::TRANSITION_FAIL);
-        }
-    }
-
-    public function capturePayment(OrderInterface $order)
-    {
-        $stripePayment = $order->getLastPayment(PaymentInterface::STATE_AUTHORIZED);
-
-        if (null === $stripePayment) {
-            return;
-        }
-
-        Stripe\Stripe::setApiKey($this->settingsManager->get('stripe_secret_key'));
-
-        $stateMachine = $this->stateMachineFactory->get($stripePayment, PaymentTransitions::GRAPH);
-
-        try {
-
-            $charge = Stripe\Charge::retrieve($stripePayment->getCharge());
-            if ($charge->captured) {
-                throw new \Exception('Charge already captured');
-            }
-
-            $charge->capture();
-
-            $stateMachine->apply(PaymentTransitions::TRANSITION_COMPLETE);
-
-        } catch (\Exception $e) {
-            $stripePayment->setLastError($e->getMessage());
-            $stateMachine->apply(PaymentTransitions::TRANSITION_FAIL);
-        }
-     }
-
-    public function createTransfer(PaymentInterface $stripePayment) {
-
-        $order = $stripePayment->getOrder();
-        $restaurant = $order->getRestaurant();
-
-        // There is no restaurant
-        if (null === $restaurant) {
-            return;
-        }
-
-        $stripeAccount = $restaurant->getStripeAccount();
-
-        // There is no Stripe account
-        if (null === $stripeAccount) {
-            return;
-        }
-
-        $amount = $order->getTotal() - $order->getFeeTotal();
-
-        $stripeTransfer = StripeTransfer::create($stripePayment, $amount);
-
-        $transferStateMachine = $this->stateMachineFactory->get($stripeTransfer, StripeTransferTransitions::GRAPH);
-
-        // transfer the correct amount to restaurant owner/shop
-        // ref https://stripe.com/docs/connect/charges-transfers
-        try {
-
-            Stripe\Stripe::setApiKey($this->settingsManager->get('stripe_secret_key'));
-
-            $transfer = Stripe\Transfer::create([
-                'amount' => $amount,
-                'currency' => strtolower($stripePayment->getCurrencyCode()),
-                'destination' => $stripeAccount->getStripeUserId(),
-                // ref https://stripe.com/docs/connect/charges-transfers#transfer-availability
-                'source_transaction' => $stripePayment->getCharge()
-            ]);
-
-            $stripeTransfer->setTransfer($transfer->id);
-
-            $transferStateMachine->apply(StripeTransferTransitions::TRANSITION_COMPLETE);
-        } catch (\Exception $e) {
-            $stripeTransfer->setLastError($e->getMessage());
-            $transferStateMachine->apply(StripeTransferTransitions::TRANSITION_FAIL);
-        }
-
-    }
-
-    /**
-     * Create a fresh payment after payment failure
-     *
-     * @param OrderInterface $order
-     */
-    public function afterPaymentFailed(OrderInterface $order) {
-
-        if ($order->getTotal() === 0) {
-            return;
-        }
-
-        $payment = StripePayment::create($order);
-        $order->addPayment($payment);
-    }
-
-    public function completePayment(PaymentInterface $payment)
-    {
-        $stateMachine = $this->stateMachineFactory->get($payment, PaymentTransitions::GRAPH);
-        $stateMachine->apply(PaymentTransitions::TRANSITION_COMPLETE);
-    }
-
-    public function dispatchOrderEvent(OrderInterface $order, $eventName)
+    private function dispatchEvent(OrderInterface $order, $eventName)
     {
         switch ($eventName) {
             case OrderCancelEvent::NAME:
@@ -273,15 +148,6 @@ class OrderManager
                 break;
             case OrderFullfillEvent::NAME:
                 $this->eventDispatcher->dispatch(OrderFullfillEvent::NAME, new OrderFullfillEvent($order));
-                break;
-        }
-    }
-
-    public function dispatchPaymentEvent(PaymentInterface $payment, $eventName)
-    {
-        switch ($eventName) {
-            case PaymentAuthorizeEvent::NAME:
-                $this->eventDispatcher->dispatch(PaymentAuthorizeEvent::NAME, new PaymentAuthorizeEvent($payment));
                 break;
         }
     }

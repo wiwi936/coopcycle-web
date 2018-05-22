@@ -156,8 +156,14 @@ services:
     public: true
     class: AppBundle\Service\OrderManager
     arguments:
-      - "@doctrine"
       - "@routing_service"
+      - "@sm.factory"
+      - "@event_dispatcher"
+
+  coopcycle.payment_manager:
+    public: true
+    class: AppBundle\Service\PaymentManager
+    arguments:
       - "@sm.factory"
       - "@coopcycle.settings_manager"
       - "@event_dispatcher"

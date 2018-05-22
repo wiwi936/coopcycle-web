@@ -119,6 +119,7 @@ class AdminController extends Controller
     public function orderAction($id, Request $request)
     {
         $orderManager = $this->get('coopcycle.order_manager');
+        $paymentManager = $this->get('coopcycle.payment_manager');
 
         $order = $this->container->get('sylius.repository.order')->find($id);
 
@@ -153,7 +154,7 @@ class AdminController extends Controller
 
                 foreach ($order->getPayments() as $payment) {
                     if (sprintf('payment_%d_complete', $payment->getId()) === $form->getClickedButton()->getName()) {
-                        $orderManager->completePayment($payment);
+                        $paymentManager->complete($payment);
                     }
                 }
 

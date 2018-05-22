@@ -12,10 +12,12 @@ use AppBundle\Event\OrderReadyEvent;
 use AppBundle\Event\OrderRefuseEvent;
 use AppBundle\Event\TaskDoneEvent;
 use AppBundle\Service\OrderManager;
+use AppBundle\Service\PaymentManager;
 use ApiPlatform\Core\EventListener\EventPriorities;
 use Doctrine\Common\Persistence\ManagerRegistry;
 use Predis\Client as Redis;
 use Psr\Log\LoggerInterface;
+use Sylius\Component\Payment\Model\PaymentInterface;
 use Symfony\Component\EventDispatcher\Event;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\Request;
@@ -38,6 +40,7 @@ final class OrderSubscriber implements EventSubscriberInterface
         Redis $redis,
         TokenStorageInterface $tokenStorage,
         OrderManager $orderManager,
+        PaymentManager $paymentManager,
         SerializerInterface $serializer,
         LoggerInterface $logger)
     {
@@ -202,7 +205,20 @@ final class OrderSubscriber implements EventSubscriberInterface
 
             if (null !== $order && $order->isFoodtech()) {
 
-                $this->orderManager->fulfill($order);
+                // The order has been delivered
+                // We need to capture the payment
+                $stripePayment = $order->getLastPayment(PaymentInterface::STATE_AUTHORIZED);
+
+                // Capturing a charge will always succeed,
+                // unless the charge is already refunded, expired, captured, or an invalid capture amount is specified
+                $this->paymentManager->capture($stripePayment);
+
+                if (PaymentInterface::STATE_FAILED === $stripePayment->getState()) {
+                    // TODO Log error somewhere
+                } else {
+                    $this->orderManager->fulfill($order);
+                }
+
                 $this->doctrine->getManager()->flush();
             }
         }
