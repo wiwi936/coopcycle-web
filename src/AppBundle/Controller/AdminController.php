@@ -38,12 +38,10 @@ use Sensio\Bundle\FrameworkExtraBundle\Configuration\Route;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Template;
 use Sylius\Component\Order\Model\OrderInterface;
 use Sylius\Component\Payment\Model\PaymentInterface;
-use Sylius\Component\Payment\PaymentTransitions;
 use Sylius\Component\Taxation\Model\TaxCategory;
 use Sylius\Component\Taxation\Model\TaxRate;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
-
 
 class AdminController extends Controller
 {
