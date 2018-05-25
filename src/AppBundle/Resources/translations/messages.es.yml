@@ -144,7 +144,6 @@ delivery.createNew: Crear nueva entrega
 help.title: Ayuda
 help.home: Inicio
 
-dashboard.unassigned: No asignado
 dashboard.assigned: Asignado
 
 norestaurantfound: No hay ningún restaurante abierto a ésta hora!<br>Pruba un horario distinto.
