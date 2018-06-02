@@ -24,7 +24,7 @@ class RemotePushNotificationManager
     /**
      * @see https://firebase.google.com/docs/cloud-messaging/http-server-ref
      */
-    private function fcm($message, array $tokens)
+    private function fcm($message, array $tokens, $data)
     {
         if (count($tokens) === 0) {
             return;
@@ -50,7 +50,7 @@ class RemotePushNotificationManager
         $response = $this->httpClient->send($request);
     }
 
-    private function apns($message, array $tokens)
+    private function apns($message, array $tokens, $data = [])
     {
         if (count($tokens) === 0) {
             return;
@@ -72,6 +72,10 @@ class RemotePushNotificationManager
 
         // Set a custom property
         // $apnsMessage->setCustomProperty('acme2', array('bang', 'whiz'));
+
+        foreach ($data as $key => $value) {
+            $apnsMessage->setCustomProperty($key, $value);
+        }
 
         // Set the expiry value to 30 seconds
         $apnsMessage->setExpiry(30);
@@ -97,7 +101,7 @@ class RemotePushNotificationManager
      * @param string $message
      * @param mixed $tokens
      */
-    public function send($message, $tokens)
+    public function send($message, $tokens, $data = [])
     {
         if (!is_array($tokens)) {
             $tokens = [ $tokens ];
@@ -111,7 +115,7 @@ class RemotePushNotificationManager
             return $token->getPlatform() === 'ios';
         });
 
-        $this->fcm($message, $fcmTokens);
-        $this->apns($message, $apnsTokens);
+        $this->fcm($message, $fcmTokens, $data);
+        $this->apns($message, $apnsTokens, $data);
     }
 }

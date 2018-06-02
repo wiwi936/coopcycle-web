@@ -3,6 +3,7 @@
 namespace AppBundle\Controller\Utils;
 
 use AppBundle\Entity\ApiUser;
+use AppBundle\Entity\RemotePushToken;
 use AppBundle\Entity\Tag;
 use AppBundle\Entity\Task;
 use AppBundle\Entity\TaskList;
@@ -43,10 +44,25 @@ trait AdminDashboardTrait
             'item_operation_name' => 'get'
         ]);
 
-        $this->get('snc_redis.default')->publish('tasks:changed', json_encode([
-            'tasks' => $normalizedTasks,
-            'user' => $normalizedUser
-        ]));
+        $remotePushNotificationManager = $this->get('coopcycle.remote_push_notification_manager');
+        $remotePushTokenRepository = $this->getDoctrine()->getRepository(RemotePushToken::class);
+
+        $tokens = $remotePushTokenRepository->findByUser($user);
+
+        // We can't send the whole serialized tasks,
+        // because the JSON payload is limited in size
+        $data = [
+            'event' => 'tasks:changed'
+        ];
+
+        foreach ($tokens as $token) {
+            $remotePushNotificationManager->send('Tasks changed!', $token, $data);
+        }
+
+        // $this->get('snc_redis.default')->publish('tasks:changed', json_encode([
+        //     'tasks' => $normalizedTasks,
+        //     'user' => $normalizedUser
+        // ]));
     }
 
     protected function getResourceFromIri($iri)
